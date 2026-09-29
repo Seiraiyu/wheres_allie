@@ -1,0 +1,25 @@
+# Coxswain project file — commit this. `cox` and the -db skills both read it.
+[project]
+slug = "wheres-allie"                 # planning.projects.slug
+repo = "Seiraiyu/wheres_allie"                 # owner/name — GitHub is the data layer
+default_base = "main"
+
+[loop]                          # defaults for `cox loop create` and the loop skill
+gate = "pr"                     # report | branch | pr | merge
+max_laps = 10
+budget_usd = 15
+time_budget = "4h"
+permission_mode = "auto"
+model = "sonnet"
+
+[checks]                        # default check + locks when none are given
+command = ""                    # e.g. "pytest -q"
+locks = []                      # e.g. ["tests/", "pyproject.toml"]
+judge = ""                      # optional rubric file path
+
+[env]                           # hints the worker uses when creating an environment
+link_ins = []                   # e.g. [".venv", "node_modules"]
+test_runner = ""                # e.g. "pytest {path}"
+
+[planning]
+dsn_env = "COX_PLANNING_DSN"    # env var holding the cox_worker DSN
