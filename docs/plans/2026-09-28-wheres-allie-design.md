@@ -1,7 +1,7 @@
-# petbox: design spec
+# wheres_allie: design spec
 
 **Status:** approved 2026-09-28 · **Date:** 2026-09-28 · **Deadline:** 2026-10-23 12:00 PDT (Alexa+ track)
-**Working name:** `petbox` (product name TBD) · **Demo pet:** Allie (dog)
+**Name:** `wheres_allie` · **Demo pet:** Allie (dog)
 **Related:** `docs/decisions/001-standalone-over-home-assistant.md`, `docs/friction-log.md`, candidate brief `docs/strategy/feature-funnel/01-candidates/006-pet-check-in.md`
 
 ---
@@ -58,7 +58,7 @@ Setup has to be possible for a typical pet owner: a box on the home network, nod
  │   BLE tag on collar ◀─ scanned by ───┘                              │
  │                                      ▼                              │
  │  ┌──────── docker compose (Pi / x86 / VM) ────────────────────────┐ │
- │  │ mosquitto  ◀──────────────▶  petbox (FastAPI, Python 3.12)     │ │
+ │  │ mosquitto  ◀──────────────▶  wheres_allie (FastAPI, Python 3.12)     │ │
  │  │                               ├─ ingest      (aiomqtt)         │ │
  │  │                               ├─ estimator   (HMM on graph)    │ │
  │  │                               ├─ brain       (visits, baseline)│ │
@@ -67,7 +67,7 @@ Setup has to be possible for a typical pet owner: a box on the home network, nod
  │  │                               ├─ relay-link  (outbound WSS)    │ │
  │  │                               └─ store       (SQLite, WAL)     │ │
  │  └────────────────────────────────────────────────────────────────┘ │
- │   Browser on LAN ── http://petbox.local ── GUI (+ Web Serial flasher)│
+ │   Browser on LAN ── http://wheres-allie.local ── GUI (+ Web Serial flasher)│
  └─────────────────────────────────────┬───────────────────────────────┘
                                        │ outbound WSS (box dials out)
  ┌── AWS ──────────────────────────────▼───────────────────────────────┐
@@ -79,7 +79,7 @@ Setup has to be possible for a typical pet owner: a box on the home network, nod
 ```
 
 **Deliverables**
-- `compose.yml`: `mosquitto` + `petbox`. Images are multi-arch (amd64, arm64), with a named volume `/data`.
+- `compose.yml`: `mosquitto` + `wheres_allie`. Images are multi-arch (amd64, arm64), with a named volume `/data`.
 - `demo.yml`: the same plus `replayer`, loading `demo-data/allie-*.bundle`. It never connects to the relay.
 - `relay/`: the AWS service, deployed with CDK (a single stack).
 
@@ -119,7 +119,7 @@ It runs once per **2 s window** per tag, as an online HMM with forward filtering
   - `visits(tag_id, place_id, kind, start, end)`: room and landmark visits, where kind is room/landmark. A visit needs a dwell of at least 30 s. Shorter stays are recorded as `transit`, so "passed the loft stairs" is kept but never called a visit.
   - `activity(tag_id, minute, moving_s)` from motion edges.
 - **Calibration data:** `labels(ts_start, ts_end, tag_id, vertex_id, source)`, where source is the guided walk, a GUI tap, or `mark_location` via voice. Each label pulls in the readings from its time window as training samples.
-- **Evaluation harness:** `petbox eval --bundle X --truth ground-truth.csv` reports room accuracy, landmark accuracy and transit false-visit rate, for both our estimator and a nearest-node baseline. This tests success criterion 1 and runs in CI on the recorded bundle.
+- **Evaluation harness:** `wheres-allie eval --bundle X --truth ground-truth.csv` reports room accuracy, landmark accuracy and transit false-visit rate, for both our estimator and a nearest-node baseline. This tests success criterion 1 and runs in CI on the recorded bundle.
 
 ### 4.4 Brain (history → answers)
 - **Daily rollups,** in local time (time zone set in the GUI at setup): time per room, landmark visit counts and times, first and last activity, active minutes, restlessness (room changes per hour), and night activity.
@@ -131,7 +131,7 @@ It runs once per **2 s window** per tag, as an online HMM with forward filtering
   - a long "away" (the tag is unheard for longer than any recent absence).
 - Behaviour only, never medical wording. Tool descriptions tell the model the same.
 
-### 4.5 MCP server (inside `petbox`, mounted at `/mcp`)
+### 4.5 MCP server (inside `wheres_allie`, mounted at `/mcp`)
 - Streamable HTTP, spec 2025-11-25, official Python SDK. Stateless.
 - Tools. Every tool takes an optional `pet` (default: the only pet, or "all") and returns structured JSON plus a short `speech` hint.
 
@@ -144,7 +144,7 @@ It runs once per **2 s window** per tag, as an online HMM with forward filtering
 | `anything_unusual(pet?, date?)` | Anomaly reasons, or "normal day", or "still learning". |
 | `mark_location(pet?, place)` | Records a label for now, e.g. "Allie is on her bed". Confirms the place name. |
 
-- **MCP App:** one UI resource, `ui://petbox/floorplan`. It renders the current floor with the pet's position, or the path replay for a requested time range. `where_is`, `day_summary` and `timeline` reference it. It is a self-contained HTML bundle built from the same React components as the GUI.
+- **MCP App:** one UI resource, `ui://wheres-allie/floorplan`. It renders the current floor with the pet's position, or the path replay for a requested time range. `where_is`, `day_summary` and `timeline` reference it. It is a self-contained HTML bundle built from the same React components as the GUI.
 - **Auth:** on the LAN, the MCP endpoint needs a box token (for testing with MCP Inspector). Through the relay, the relay authenticates Alexa and the box authenticates the relay (§4.7).
 
 ### 4.6 GUI (React + TypeScript, served by FastAPI, LAN only)
@@ -178,7 +178,7 @@ It runs once per **2 s window** per tag, as an online HMM with forward filtering
 
 ---
 
-## 5. Data model (SQLite, WAL, `/data/petbox.db`)
+## 5. Data model (SQLite, WAL, `/data/wheres_allie.db`)
 `home(version, json)` · `nodes(id, name, floor_id, x, y, z, calib_json, last_seen, online)` · `pets(id, name, species)` · `tags(id, pet_id, ibeacon_id, motion_ibeacon_id)` · `readings(ts, tag_id, node_id, rssi, distance, rssi_var)` · `motion(ts, tag_id, moving)` · `positions(ts, tag_id, vertex_id, room_id, floor_id, confidence)` · `visits(id, tag_id, place_id, kind, start, end)` · `labels(id, tag_id, vertex_id, ts_start, ts_end, source)` · `rollups(tag_id, date, json)` · `settings(key, value)`.
 
 Retention runs nightly: readings 30 days, positions 1 year, everything else forever.
@@ -206,7 +206,7 @@ Retention runs nightly: readings 30 days, positions 1 year, everything else fore
 ---
 
 ## 8. Testing approach
-- **Estimator:** the recorded bundle plus `ground-truth` labels are the regression test, via `petbox eval` in CI with accuracy thresholds (success criterion 1). Unit tests cover the emission models and the transition matrix built from a small synthetic graph.
+- **Estimator:** the recorded bundle plus `ground-truth` labels are the regression test, via `wheres-allie eval` in CI with accuracy thresholds (success criterion 1). Unit tests cover the emission models and the transition matrix built from a small synthetic graph.
 - **Geometry:** unit tests for room detection from wall loops (including a wall with a gap and an open-plan divider), for door-to-edge generation, and for cross-floor stairs.
 - **Brain:** fixtures of synthetic visit sequences produce the expected rollups and anomaly reasons (for example, a "no water-bowl visit" day).
 - **MCP:** contract tests call every tool through the SDK client against a replayed bundle, and the MCP App resource must render (a Playwright snapshot).
@@ -225,7 +225,7 @@ Retention runs nightly: readings 30 days, positions 1 year, everything else fore
 | HMM accuracy isn't clearly better than nearest-node. | The eval harness shows it early (phase 3); tune the emission and floor attenuation; learned spots from the guided walk. |
 | The wall editor eats the schedule. | Hard cap: phase 2 is timeboxed to 5 days. Cut order: underlay rotation, 45° snapping, then divider walls. |
 | esptool-js flashing with a patched bootloader fails in the browser. | Keep the proven CLI esptool command in docs as the fallback path. |
-| Not enough days of baseline data before the demo. | Collect data continuously from now (a raw logger is already running). Phase 1 moves the logger into petbox. |
+| Not enough days of baseline data before the demo. | Collect data continuously from now (a raw logger is already running). Phase 1 moves the logger into wheres_allie. |
 
 ---
 
@@ -236,9 +236,9 @@ Order: the risky spikes first, then the data path, because the brain and demo ne
 | Phase | Description | Status | Tested | Pushed |
 |-------|-------------|--------|--------|--------|
 | 0 | Spikes: Alexa+ MCP Toolkit hello-world on a real device (temporary tunnel); BC021 motion-trigger PoC; esptool-js flash with the patched bootloader | pending | no | no |
-| 1 | Box skeleton: compose (mosquitto + petbox), move nodes to our broker, ingest + SQLite + retention, node health API; continuous data collection starts | pending | no | no |
+| 1 | Box skeleton: compose (mosquitto + wheres_allie), move nodes to our broker, ingest + SQLite + retention, node health API; continuous data collection starts | pending | no | no |
 | 2 | Home model + plan editor: walls/snapping, auto-rooms, doors, stairs, floors, landmarks, nodes, underlay (timeboxed to 5 days) | pending | no | no |
-| 3 | Estimator: walkable graph, HMM (physics emission), visits/transit, `petbox eval` vs nearest-node on recorded data | pending | no | no |
+| 3 | Estimator: walkable graph, HMM (physics emission), visits/transit, `wheres-allie eval` vs nearest-node on recorded data | pending | no | no |
 | 4 | Calibration: labels, guided walk, "here now", fingerprint emission + blending; eval shows the gain | pending | no | no |
 | 5 | Live + History GUI: live marker, path replay with scrubber, floor auto-switch, visits list | pending | no | no |
 | 6 | Brain + MCP: rollups, baseline, anomaly reasons, 6 tools, LAN token auth, contract tests | pending | no | no |
