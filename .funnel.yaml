@@ -1,0 +1,14 @@
+version: 1
+paths:
+  backlog: ideas/BACKLOG.md
+  deferred: ideas/DEFERRED.md
+  killed: ideas/KILLED.md
+  metrics: ideas/METRICS.md
+  current: ideas/CURRENT.md
+  candidates_dir: docs/strategy/feature-funnel/01-candidates/
+  pretotype_dir: docs/strategy/feature-funnel/03-pretotype/
+  redteam_dir: docs/strategy/feature-funnel/04-red-team/
+  decision_dir: docs/strategy/feature-funnel/05-decision/
+# Amazon "Build, Ship, Shape" hackathon, Alexa+ track. Deadline 2026-10-23 12:00 PDT.
+buyer_personas: [non-technical household, low-income family, parent, pet owner, caregiver]
+competitors: [northbridge-alexa-mcp (home-ops), provendone (tasks), asaya (memory/calendar), scamshield-alexa (scam check), homeops-guardian (energy)]

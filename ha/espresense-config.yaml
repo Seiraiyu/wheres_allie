@@ -1,0 +1,113 @@
+# ESPresense-companion config → paste into HA at /config/espresense/config.yaml
+# Placeholder geometry: 3 floors, rooms are fake 4x4 m boxes. Room/node shapes only matter once we have 3+ nodes;
+# with 2 nodes the nearest_node locator does the work.
+
+mqtt:            # empty = use HA-provided Mosquitto
+  host:
+  port: 1883
+  ssl: false
+  username:
+  password:
+  discovery_topic: homeassistant
+
+gps:             # rough Marietta, GA; only used for the companion's map
+  latitude: 33.95
+  longitude: -84.55
+  elevation: 300
+  rotation: 0
+  report: false
+
+map:
+  flip_x: false
+  flip_y: true
+  wall_thickness: 0.1
+
+timeout: 30
+away_timeout: 120
+device_retention: 30d
+
+optimization:
+  enabled: false  # needs 3+ nodes to be useful
+
+locators:
+  nadaraya_watson:
+    enabled: false
+  nelder_mead:
+    enabled: false
+  bfgs:
+    enabled: false
+  mle:
+    enabled: false
+  multi_floor:
+    enabled: false
+  nearest_node:
+    enabled: true
+    max_distance: 10
+
+filtering:
+  process_noise: 0.01
+  measurement_noise: 0.1
+  max_velocity: 0.5
+  smoothing_weight: 0.7
+  motion_sigma: 2.0
+
+history:
+  enabled: false
+
+floors:
+  - id: basement
+    name: Basement
+    bounds: [[0, 0, 0], [10, 6, 2.5]]
+    rooms:
+      - id: office
+        name: Office
+        points: [[0, 0], [4, 0], [4, 4], [0, 4]]
+      - id: moms_room
+        name: Mom's Room
+        points: [[5, 0], [9, 0], [9, 4], [5, 4]]
+  - id: main
+    name: Main
+    bounds: [[0, 0, 2.5], [10, 6, 5.5]]
+    rooms:
+      - id: kitchen
+        name: Kitchen
+        points: [[0, 0], [4, 0], [4, 4], [0, 4]]
+      - id: master_bedroom
+        name: Master Bedroom
+        points: [[5, 0], [9, 0], [9, 4], [5, 4]]
+  - id: upstairs
+    name: Upstairs
+    bounds: [[0, 0, 5.5], [10, 6, 8.5]]
+    rooms:
+      - id: loft
+        name: Loft
+        points: [[0, 0], [4, 0], [4, 4], [0, 4]]
+
+# id must match the node's MQTT room id (espresense/rooms/<id>)
+# point z is absolute (includes the floor's base height)
+nodes:
+  - id: office
+    name: Office
+    point: [2, 2, 1]
+    floors: ["basement"]
+  - id: moms_room
+    name: Mom's Room
+    point: [7, 2, 1]
+    floors: ["basement"]
+  - id: kitchen
+    name: Kitchen
+    point: [2, 2, 3.5]
+    floors: ["main"]
+  - id: master_bedroom
+    name: Master Bedroom
+    point: [7, 2, 3.5]
+    floors: ["main"]
+  - id: loft
+    name: Loft
+    point: [2, 2, 6.5]
+    floors: ["upstairs"]
+
+# Only track Allie; everything else (KICKR, phones, Sonos) is ignored
+devices:
+  - id: "iBeacon:426c7565-4368-6172-6d42-6561636f6e73-3838-4949"
+    name: Allie

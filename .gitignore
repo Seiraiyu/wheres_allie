@@ -1,0 +1,8 @@
+# raw personal data + large binaries
+data/allie-raw.log
+firmware/*.bin
+.playwright-cli/
+.env
+*.db
+node_modules/
+__pycache__/
