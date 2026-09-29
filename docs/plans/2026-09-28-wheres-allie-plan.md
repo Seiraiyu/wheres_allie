@@ -4,6 +4,8 @@
 **Architecture:** A docker compose deployment of mosquitto plus the `wheres_allie` FastAPI box (ingest → HMM estimator on a walkable graph → brain → MCP server + React GUI), and an outbound WebSocket to an AWS Fargate relay that Alexa+ calls through Login with Amazon account linking. A replay bundle of real recorded data serves as the judge mode.
 **Tech Stack:** Python 3.12 (FastAPI, mcp 2.2 SDK, aiomqtt, numpy, shapely, SQLite), React 18 + TypeScript (Vite 8, vitest 5, Playwright), esptool-js, AWS CDK (Python), ECS Fargate, DynamoDB, GitHub Actions and Pages.
 
+**Status:** approved 2026-09-29
+
 **Design:** `2026-09-28-wheres-allie-design.md` · **Contract:** `2026-09-28-wheres-allie-conventions.md`. Every plan follows the contract, and cross-plan details are resolved in each plan's "Interface additions" section.
 
 Each plan was written by a parallel agent. Its code was extracted and run in a scratch environment against stand-ins for earlier plans. Some parts are not yet verified: the Docker image builds, `cdk synth` and deploy (no daemon or credentials were available), and anything that needs hardware or Alexa.
