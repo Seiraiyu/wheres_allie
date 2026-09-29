@@ -1491,7 +1491,7 @@ The flow:
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type Cb = (e: { topic: string; data: Record<string, unknown> }) => void;
+type Cb = (topic: string, data: Record<string, unknown>) => void;
 const subs: Cb[] = [];
 vi.mock("../../lib/api", () => ({ apiPost: vi.fn(async () => ({ ok: true })) }));
 vi.mock("../../lib/ws", () => ({
@@ -1522,9 +1522,9 @@ describe("AddNodeFlow", () => {
     );
     expect(location.search).toBe(""); // query consumed
     await screen.findByText(/waiting for office/i);
-    act(() => subs.forEach((cb) => cb({ topic: "node.health", data: { id: "kitchen", online: true } })));
+    act(() => subs.forEach((cb) => cb("node.health", { id: "kitchen", online: true })));
     expect(screen.queryByText(/is online/i)).toBeNull();
-    act(() => subs.forEach((cb) => cb({ topic: "node.health", data: { id: "office", online: true } })));
+    act(() => subs.forEach((cb) => cb("node.health", { id: "office", online: true })));
     expect(await screen.findByText(/office is online/i)).toBeTruthy();
   });
 
@@ -1591,8 +1591,8 @@ export function AddNodeFlow() {
   useEffect(() => {
     if (phase.kind !== "waiting") return;
     const { node } = phase;
-    const unsubscribe = subscribe("node.health", (e: { topic: string; data: { id?: string; online?: boolean } }) => {
-      if (e.data.id === node.roomId && e.data.online) setPhase({ kind: "online", node });
+    const unsubscribe = subscribe("node.health", (_topic: string, data: { id?: string; online?: boolean }) => {
+      if (data.id === node.roomId && data.online) setPhase({ kind: "online", node });
     });
     const timer = setTimeout(
       () => setPhase({
@@ -1784,7 +1784,7 @@ Expected: everything is green and the push succeeds. The Pages workflow then dep
 > - `wheres_allie.replay.bundle`: `Bundle(manifest, home=EMPTY_HOME, readings=[], motion=[], labels=[], ground_truth=None)` is a dataclass whose rows are **tuples in §13 column order**. Numeric columns are floats, empty cells are `None`, and `moving` is an int. The module also provides `write_bundle(path, bundle)`, `read_bundle(path) -> Bundle` and `COLUMNS`.
 > - `wheres_allie.config.Settings` has `db_path`, `mqtt_host`, `mqtt_port`, `mqtt_user`, `mqtt_pass` and `public_host`. `db.connect()` opens the database in **autocommit** mode (`isolation_level=None`), so bulk inserts need an explicit `BEGIN`/`COMMIT`.
 > - `wheres_allie.api.deps`: `Conn` and `Cfg` are `Annotated` dependencies. Routers use paths without `/api`, and `app.py` registers them with `prefix="/api"`. Test fixtures are `client` (a `TestClient` on `create_app(start_background=False)`, whose DB is at `client.app.state.conn`, with `WA_MQTT_PASS=test`), `conn` and `settings`.
-> - Web: `apiPost(path, body)` comes from `lib/api.ts` (it throws `ApiError`), and `subscribe(topicPrefix, (e: {topic, data}) => void) => unsubscribe` from `lib/ws.ts`. The `node.health` data is the full nodes row, including `id` and `online: bool`.
+> - Web: `apiPost(path, body)` comes from `lib/api.ts` (it throws `ApiError`), and `subscribe(topicPrefix, (topic, data) => void) => unsubscribe` from `lib/ws.ts`. The `node.health` data is the full nodes row, including `id` and `online: bool`.
 > - Plan 03: `estimator.runner.run_estimator` (the lifespan task) catches up from a per-tag cursor, stored in `settings` as `estimator.last_ts.<tag_id>`. A tag with no cursor starts at its earliest reading. So readings that `demo-seed` backfills into a fresh DB get positions and visits on the box's first passes, at about 5400 windows/s. The home must be saved first, and `backfill()` does that.
 > - Plan 01's spike C Python snippet for the bootloader patch is superseded by `firmware.patch_bootloader` (Task 1). Don't keep two copies.
 

@@ -16,7 +16,7 @@ Each plan was written by a parallel agent. Its code was extracted and run in a s
 | 4 | Plan 04: live + history GUI + MCP App (phases 5, 8): 23 tasks | pending | no | no |
 | 5 | Plan 05: brain + MCP tools (phase 6): 14 tasks | pending | no | no |
 | 6 | Plan 06: AWS relay + account linking + box link (phase 7): 22 tasks | pending | no | no |
-| 7 | Plan 07: node flasher + judge mode + submission + stretch (phases 9–11): 27 tasks | pending | no | no |
+| 7 | Plan 07: node flasher + judge mode + submission + stretch (phases 9–11): 28 tasks | pending | no | no |
 
 **Execution order:** 01 → 02 → 03 → (04, 05) → 06 → 07. Plan 05 Task 6 needs plan 04 Task 4 done first. Milestones follow design §10: phases 0–1 by 10/01, 2–4 by 10/09, 5–7 by 10/15, 8–10 by 10/21.
 
