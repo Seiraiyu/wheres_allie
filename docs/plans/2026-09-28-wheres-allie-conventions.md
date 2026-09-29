@@ -54,7 +54,7 @@ docs/
 - Commits: conventional (`feat:`, `fix:`, `test:`, `chore:`, `docs:`), one per task. Every commit message ends with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Push to `main` after each phase is green.
 
 ## 2. Dependencies (pin major versions)
-box: `fastapi>=0.115`, `uvicorn[standard]`, `pydantic>=2`, `pydantic-settings`, `aiomqtt>=2`, `numpy>=2`, `shapely>=2` (polygons), `mcp>=1.20` (official SDK, Streamable HTTP), `typer`, `httpx`, `websockets>=13`, `python-multipart`, `tzdata`. Dev: `pytest`, `pytest-asyncio`, `ruff`, `respx`.
+box: `fastapi>=0.115`, `uvicorn[standard]`, `pydantic>=2`, `pydantic-settings`, `aiomqtt>=2`, `numpy>=2`, `shapely>=2` (polygons), `mcp>=2.2,<3` (official SDK 2.x: MCPServer + Apps extension, Streamable HTTP), `typer`, `httpx`, `websockets>=13`, `python-multipart`, `tzdata`. Dev: `pytest`, `pytest-asyncio`, `ruff`, `respx`.
 web: `react`, `react-dom`, `react-router-dom`, `zustand` (state), `esptool-js` (flasher), `@modelcontextprotocol/ext-apps` (MCP App bridge, if available; otherwise plain `window.parent.postMessage`), `vitest`, `@testing-library/react`, `@playwright/test`. No UI kit. Hand-written CSS using `tokens.css`.
 relay: `fastapi`, `uvicorn`, `websockets`, `httpx`, `boto3`, `pydantic-settings`, `aws-cdk-lib` (infra only).
 
@@ -246,4 +246,4 @@ Layout: a left icon rail (pages), a floating bottom tool palette (editor), a rig
 | `2026-09-28-wheres-allie-plan-06-relay.md` | 7 AWS relay + relaylink + pairing |
 | `2026-09-28-wheres-allie-plan-07-flasher-judge.md` | 9 in-GUI flasher, 10 judge mode + submission, 11 stretch notes |
 
-Dependency order for execution: 01 → 02 → 03 → (04, 05 in parallel) → 06 → 07. A plan may rely only on artifacts created by plans before it in this order, plus this document.
+Dependency order for execution: 01 → 02 → 03 → (04, 05 in parallel) → 06 → 07. Exception: plan 05 Task 6 needs plan 04 Task 4 (`home/pathing.py` `home_context`) done first. A plan may rely only on artifacts created by plans before it in this order, plus this document and each plan's "Interface additions" section (the resolved contracts between plans).
