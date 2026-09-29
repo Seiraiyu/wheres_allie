@@ -10,9 +10,9 @@ mqtt:            # empty = use HA-provided Mosquitto
   password:
   discovery_topic: homeassistant
 
-gps:             # rough Marietta, GA; only used for the companion's map
-  latitude: 33.95
-  longitude: -84.55
+gps:             # set to your home; only used for the companion's map
+  latitude: 0.0
+  longitude: 0.0
   elevation: 300
   rotation: 0
   report: false
