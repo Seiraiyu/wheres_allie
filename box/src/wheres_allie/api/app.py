@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from wheres_allie import __version__, db
+from wheres_allie.api import ws
 from wheres_allie.api.deps import Cfg, Conn
 from wheres_allie.api.routes import nodes, pets
 from wheres_allie.bus import Bus
@@ -54,6 +55,7 @@ def create_app(settings: Settings | None = None, conn: sqlite3.Connection | None
     app.state.relay_status = "offline"  # set by relaylink (plan 06)
     app.include_router(nodes.router, prefix="/api")
     app.include_router(pets.router, prefix="/api")
+    app.include_router(ws.router, prefix="/api")
 
     @app.get("/api/health")
     def health(request: Request) -> dict:
