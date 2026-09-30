@@ -79,3 +79,11 @@ def test_node_status_and_telemetry(conn):
         "id": "loft", "name": None, "online": 0, "last_seen": 3.0, "ip": "192.168.5.222",
         "wifi_rssi": -70, "uptime_s": 60, "version": "v4.0.6", "calib_json": None}
     assert [e[1]["online"] for e in events] == [True, True, False]
+
+
+def test_record_gap_only_when_longer_than_10s(conn):
+    from wheres_allie.ingest.mqtt import record_gap
+    record_gap(conn, 100.0, 105.0)
+    record_gap(conn, 200.0, 260.0)
+    assert [tuple(r) for r in conn.execute("SELECT * FROM gaps")] == [
+        (200.0, 260.0, "mqtt_disconnect")]

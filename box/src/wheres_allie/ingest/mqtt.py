@@ -1,9 +1,15 @@
 """MQTT ingest: ESPresense messages -> readings, motion edges, node health."""
 
+import asyncio
+import logging
+import os
 import sqlite3
 import time
 
+import aiomqtt
+
 from wheres_allie.bus import Bus
+from wheres_allie.config import Settings
 from wheres_allie.ingest.parse import (
     DeviceReading,
     NodeStatus,
@@ -13,8 +19,11 @@ from wheres_allie.ingest.parse import (
     parse_telemetry,
 )
 
+log = logging.getLogger(__name__)
+
 MOTION_HOLD_S = 10.0  # BC021 keeps the motion id up ~10 s; normal id within this is still "moving"
 UNKNOWN_TTL_S = 600.0  # unregistered devices count as "nearby" for 10 min
+GAP_MIN_S = 10.0
 
 
 class Ingestor:
@@ -113,3 +122,33 @@ class Ingestor:
             if dev not in best or rssi > best[dev]["rssi"]:
                 best[dev] = {"ibeacon_id": dev, "node_id": node, "rssi": rssi, "last_seen": ts}
         return sorted(best.values(), key=lambda c: -c["rssi"])
+
+
+def record_gap(conn: sqlite3.Connection, start: float, end: float) -> None:
+    if end - start > GAP_MIN_S:
+        conn.execute("INSERT INTO gaps (ts_start, ts_end, reason) VALUES (?, ?, 'mqtt_disconnect')",
+                     (start, end))
+
+
+async def run_ingest(settings: Settings, conn: sqlite3.Connection, bus: Bus,
+                     ingestor: Ingestor | None = None) -> None:
+    ingestor = ingestor or Ingestor(conn, bus)
+    backoff, down_since = 1.0, time.time()
+    while True:
+        try:
+            async with aiomqtt.Client(
+                settings.mqtt_host, settings.mqtt_port, username=settings.mqtt_user,
+                password=settings.mqtt_pass, identifier=f"wheres-allie-{os.getpid()}",
+            ) as client:
+                await client.subscribe("espresense/devices/+/+")
+                await client.subscribe("espresense/rooms/+/+")
+                log.info("mqtt connected to %s:%s", settings.mqtt_host, settings.mqtt_port)
+                record_gap(conn, down_since, time.time())
+                backoff = 1.0
+                async for msg in client.messages:
+                    ingestor.handle(str(msg.topic), msg.payload)
+        except aiomqtt.MqttError as e:
+            down_since = time.time()
+            log.warning("mqtt: %s; retrying in %.0f s", e, backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
