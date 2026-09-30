@@ -5,7 +5,9 @@ from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from wheres_allie import __version__, db
 from wheres_allie.api import ws
@@ -15,6 +17,18 @@ from wheres_allie.bus import Bus
 from wheres_allie.config import Settings
 from wheres_allie.ingest.mqtt import Ingestor, run_ingest
 from wheres_allie.retention import run_retention
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serves web/dist; unknown non-/api, non-/mcp paths get index.html (client-side routes)."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code != 404 or path.startswith(("api", "mcp")):
+                raise
+            return await super().get_response("index.html", scope)
 
 
 class SiteSettings(BaseModel):
@@ -76,4 +90,7 @@ def create_app(settings: Settings | None = None, conn: sqlite3.Connection | None
             db.set_setting(conn, key, value)
         return read_site_settings(conn, cfg)
 
+    # Keep this mount LAST: it matches every path not claimed above (plans add /mcp before it).
+    if settings.web_dist.is_dir():
+        app.mount("/", SPAStaticFiles(directory=settings.web_dist, html=True), name="web")
     return app
