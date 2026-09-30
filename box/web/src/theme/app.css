@@ -1,0 +1,22 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(--font); }
+.shell { display: flex; min-height: 100vh; }
+.rail {
+  width: 64px; flex: none; display: flex; flex-direction: column; gap: 4px; padding: 8px 6px;
+  background: var(--panel); border-right: 1px solid var(--line);
+}
+.rail a {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 0;
+  border-radius: var(--radius); color: var(--muted); text-decoration: none; font-size: 11px;
+}
+.rail a .icon { font-size: 16px; font-weight: 600; }
+.rail a:hover { background: var(--bg); }
+.rail a.active { color: var(--accent); background: var(--room-fill); }
+.page { flex: 1; padding: 24px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.ok { background: var(--accent-2); }
+.dot.down { background: var(--danger); }
