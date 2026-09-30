@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from wheres_allie import __version__, db
 from wheres_allie.api.deps import Cfg, Conn
-from wheres_allie.api.routes import nodes
+from wheres_allie.api.routes import nodes, pets
 from wheres_allie.bus import Bus
 from wheres_allie.config import Settings
 from wheres_allie.ingest.mqtt import Ingestor, run_ingest
@@ -53,6 +53,7 @@ def create_app(settings: Settings | None = None, conn: sqlite3.Connection | None
     app.state.ingestor = ingestor
     app.state.relay_status = "offline"  # set by relaylink (plan 06)
     app.include_router(nodes.router, prefix="/api")
+    app.include_router(pets.router, prefix="/api")
 
     @app.get("/api/health")
     def health(request: Request) -> dict:
