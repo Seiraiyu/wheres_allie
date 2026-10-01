@@ -1,0 +1,102 @@
+name: deploy
+
+# Tag v* -> tests -> image on GHCR -> deploy to the box VM over SSH (no repo on the VM).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+env:
+  IMAGE: ghcr.io/seiraiyu/wheres-allie
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      deploy_tar: ${{ steps.meta.outputs.deploy_tar }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version and pack deploy/
+        id: meta
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=manual-$(date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+          fi
+          # compose.yml + mosquitto files travel to the VM inside the SSH step (a few KB)
+          echo "deploy_tar=$(git archive HEAD:deploy | gzip -9 | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: box
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    # ARC scale set: a single bare label, never a [self-hosted, ...] array.
+    runs-on: arc-runner-x86
+    permissions:
+      packages: read
+    steps:
+      - name: Deploy to the box VM
+        uses: appleboy/ssh-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+          DEPLOY_TAR: ${{ needs.build-and-push.outputs.deploy_tar }}
+          WA_MQTT_PASS: ${{ secrets.WA_MQTT_PASS }}
+          WA_PUBLIC_HOST: ${{ vars.WA_PUBLIC_HOST || '192.168.5.20' }}
+          WA_TZ: ${{ vars.WA_TZ || 'America/New_York' }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_SSH_PORT }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GH_TOKEN,VERSION,DEPLOY_TAR,WA_MQTT_PASS,WA_PUBLIC_HOST,WA_TZ
+          script: |
+            set -eu
+            mkdir -p ~/wheres-allie
+            cd ~/wheres-allie
+            echo "$DEPLOY_TAR" | base64 -d | gunzip | tar -x
+            umask 077
+            cat > .env <<ENV
+            WA_MQTT_USER=wheres_allie
+            WA_MQTT_PASS=$WA_MQTT_PASS
+            WA_TZ=$WA_TZ
+            WA_PUBLIC_HOST=$WA_PUBLIC_HOST
+            WA_RELAY_URL=
+            WA_IMAGE=ghcr.io/seiraiyu/wheres-allie:$VERSION
+            ENV
+            echo "$GH_TOKEN" | docker login ghcr.io -u github-actions --password-stdin
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker logout ghcr.io
+            docker image prune -f
+            for i in $(seq 1 30); do
+              curl -fsS localhost/api/health && exit 0
+              sleep 2
+            done
+            echo "box did not become healthy"; docker compose logs --tail 50 box; exit 1
