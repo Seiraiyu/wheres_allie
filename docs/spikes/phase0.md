@@ -18,7 +18,48 @@
 
 **Decision:** pending owner. Affects design success criterion 2 (real Alexa+ device through the relay) and plan 06 (LWA account linking, Alexa add-on registration, tasks 15 and 18-20).
 
-## B. BC021 motion trigger (date: )
+## B. BC021 motion trigger (date: 2026-10-01)
+
+Done on a new spare tag (BC021 Pro, `BCPro_220767`, MAC `dd88000035fd`), not Allie's. Watched on the HA broker through the `office` (192.168.5.233) and `loft` nodes, ESPresense v4.0.6.
+
+Tag settings (KBeaconPro app; the BC021 Pro, MAC `DD88…`, does not use the "KBeacon" app):
+- Slot 0: iBeacon, UUID `426c7565-4368-6172-6d42-6561636f6e73`, major 3838, minor 4951 (changed from the factory 4949, which is the same as Allie's), interval 1022.5 ms, always on.
+- Slot 1: iBeacon, same UUID, major 3838, minor 4952, Trigger Only Adv = Yes.
+- Trigger: Motion, action Advertise, Advertisement Change = No, Trigger Adv Slot 1, Trigger Adv Time 10 s, Trigger Adv Interval 400 ms then 100 ms. Sensitivity not recorded.
+
+| Check | Result |
+|---|---|
+| Tag switches on the motion id when moved, off when still (KBeaconPro scan screen) | pass |
+| (a) motion-id messages from a node within 5 s of shaking | **fail** |
+| (b) motion-id messages stop within 20 s of stillness | **fail** |
+| (c) no motion-id messages while still | **fail** |
+
+Why it fails: an ESPresense node reports one id per hardware address, the first one it hears, and keeps it until it forgets the device.
+- With the trigger at 400 ms (about 25 motion broadcasts per 10 s window), the nodes reported only `…-4951` through repeated shaking.
+- After the tag was unheard for 3 minutes and reappeared while moving, both nodes reported only `…-4952`, and kept doing so for minutes while the tag sat still and the app showed 4951.
+- Same cause: after the minor was changed from 4949 to 4951, the node reported 4949 for 7 minutes; restarting the node fixed it.
+
+So the id a node reports says nothing about motion, and it can differ between nodes.
+
+What does track motion: the `int` field in each device message (the node's measured interval between broadcasts from that MAC), with the trigger slot at 100 ms. On `office` at about -75 dBm:
+
+| State | `int` |
+|---|---|
+| Still, before | about 1650 ms |
+| Moving | 50–265 ms, within about 1 s of the first broadcast |
+| Still, after | climbs slowly: 304 ms at +5 s, 624 at +60 s, 869 at +130 s, 1022 at +180 s |
+
+On `loft` at about -89 dBm: 457–971 ms moving, 1400–2500 ms still. At 400 ms the drop was too small to use (about 2000 to 1930 ms at -90 dBm).
+
+Not measured: exact onset and release delays against timed shakes, battery cost of 100 ms bursts, behaviour on a collar.
+
+**Decision (proposed, owner to confirm):** partial pass by a different route.
+- Register both ids for a tag (`ibeacon_id` and `motion_ibeacon_id`); readings arrive under either. Unchanged from conventions §5.
+- Replace plan 01's motion rule (Interface additions 7, "a motion-id message means moving") with one based on `int`: a sharp drop means moving, and still is declared when `int` has risen again. Ingest already parses the payload, so this is a change to `Ingestor.handle` and its tests (plan 01 tasks 10 and 11, already complete).
+- Keep the estimator's movement-variance fallback (design §4.1) for tags without a trigger and for weak signals.
+- Every new BC021 ships as 3838-4949. Setup must give each tag its own minor, and a node must be restarted (or the tag kept away for about 3 minutes) before it reports a changed id.
+
+Also seen: during this test no node reported Allie's own tag at all (the only `…-4949` messages came from the new tag before its minor was changed), though she was upstairs. Not investigated.
 
 ## C. esptool-js browser flash (date: 2026-10-01)
 
