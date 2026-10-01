@@ -53,10 +53,23 @@ On `loft` at about -89 dBm: 457–971 ms moving, 1400–2500 ms still. At 400 ms
 
 Not measured: exact onset and release delays against timed shakes, battery cost of 100 ms bursts, behaviour on a collar.
 
-**Decision (proposed, owner to confirm):** partial pass by a different route.
-- Register both ids for a tag (`ibeacon_id` and `motion_ibeacon_id`); readings arrive under either. Unchanged from conventions §5.
-- Replace plan 01's motion rule (Interface additions 7, "a motion-id message means moving") with one based on `int`: a sharp drop means moving, and still is declared when `int` has risen again. Ingest already parses the payload, so this is a change to `Ingestor.handle` and its tests (plan 01 tasks 10 and 11, already complete).
-- Keep the estimator's movement-variance fallback (design §4.1) for tags without a trigger and for weak signals.
+Root cause, from the ESPresense v4.0.6 source (`src/BleFingerprint.cpp`, `BleFingerprint::setId`):
+
+```cpp
+if (idType > 0 && newIdType <= idType) return false;
+```
+
+A device that already has an iBeacon id rejects any later iBeacon id, because it is the same id type. It is only re-identified after `forget_ms` (default 150 s) without being heard, or a node restart.
+
+A 3-line change that lets one iBeacon id replace another on the same device is in `spikes/espresense/ibeacon-id-change.patch` (applies to tag v4.0.6). With it, a moving tag should be reported under the motion id and a still one under the normal id, which is the behaviour plan 01's ingest already implements. **Not built or tested yet**: a build was started but not flashed. Open question for the test: while both slots broadcast, the id may flip between messages.
+
+**Owner's call (2026-10-01):** motion is a stretch goal. It could be very useful, but nothing else waits on it.
+
+**Decision (proposed, owner to confirm):** fail as designed on stock ESPresense; two routes to a pass, both stretch.
+- Either route: register both ids for a tag (`ibeacon_id` and `motion_ibeacon_id`); on stock firmware readings arrive under either. Unchanged from conventions §5.
+- Route 1, forked firmware: run ESPresense with the patch above. No ingest change. Costs: we own a firmware build, auto-update must stay off, the flasher (plan 07) ships our build, and design non-goal "ESPresense firmware v4.0.6 is used unmodified" changes. Counts for the Open Source mini-challenge as a fork or upstream PR. Test on the spare board first.
+- Route 2, stock firmware: replace plan 01's motion rule (Interface additions 7, "a motion-id message means moving") with one based on `int`: a sharp drop means moving, and still is declared when `int` has risen again. Ingest already parses the payload, so this is a change to `Ingestor.handle` and its tests (plan 01 tasks 10 and 11, already complete).
+- Until either route is done: register tags with `motion_ibeacon_id` NULL and use the estimator's movement-variance fallback (design §4.1), as plan 01 Task 2 step 8 says for a fail.
 - Every new BC021 ships as 3838-4949. Setup must give each tag its own minor, and a node must be restarted (or the tag kept away for about 3 minutes) before it reports a changed id.
 
 Also seen: during this test no node reported Allie's own tag at all (the only `…-4949` messages came from the new tag before its minor was changed), though she was upstairs. Not investigated.

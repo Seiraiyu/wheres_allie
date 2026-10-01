@@ -1,0 +1,15 @@
+diff --git a/src/BleFingerprint.cpp b/src/BleFingerprint.cpp
+index cc909fb..d9b5c64 100644
+--- a/src/BleFingerprint.cpp
++++ b/src/BleFingerprint.cpp
+@@ -63,7 +63,9 @@ bool BleFingerprint::shouldHide(const String &s) {
+  */
+ bool BleFingerprint::setId(const String &newId, short newIdType, const String &newName) {
+     if (idType < 0 && newIdType < 0 && newIdType >= idType) return false;
+-    if (idType > 0 && newIdType <= idType) return false;
++    // A beacon may change its iBeacon id: reconfigured, or a motion/button trigger advertising a second slot.
++    bool ibeaconChanged = idType == ID_TYPE_IBEACON && newIdType == ID_TYPE_IBEACON && id != newId;
++    if (idType > 0 && newIdType <= idType && !ibeaconChanged) return false;
+     // Log.printf("setId: %s %d %s OLD idType: %d\r\n", newId.c_str(), newIdType, newName.c_str(), idType);
+ 
+     ignore = newIdType < 0;
