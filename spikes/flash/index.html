@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Flash spike</title></head>
+<body>
+  <h1>esptool-js flash spike: ESPresense v4.0.6</h1>
+  <p>
+    <label><input type="radio" name="bl" value="patched" checked> pre-patched bootloader (flashMode keep)</label><br>
+    <label><input type="radio" name="bl" value="stock"> stock bootloader, esptool-js sets dout / 20m</label>
+  </p>
+  <button id="go">Connect + erase + flash</button>
+  <button id="mon">Reset + serial monitor (115200)</button>
+  <p id="progress"></p>
+  <pre id="log"></pre>
+  <script type="module">
+    import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.7.0/bundle.js";
+    const log = document.getElementById("log");
+    const progress = document.getElementById("progress");
+    const terminal = {
+      clean: () => (log.textContent = ""),
+      writeLine: (s) => (log.textContent += s + "\n"),
+      write: (s) => (log.textContent += s),
+    };
+    const get = async (p) => new Uint8Array(await (await fetch(p)).arrayBuffer());
+    // Boot diagnostics: reset the board and show what it prints. Reload the page to stop.
+    document.getElementById("mon").onclick = async () => {
+      const port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      terminal.clean();
+      await port.setSignals({ dataTerminalReady: false, requestToSend: true }); // EN low
+      await new Promise((r) => setTimeout(r, 100));
+      await port.setSignals({ dataTerminalReady: false, requestToSend: false }); // run
+      const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        terminal.write(value);
+      }
+    };
+    document.getElementById("go").onclick = async () => {
+      const patched = document.querySelector("input[name=bl]:checked").value === "patched";
+      const port = await navigator.serial.requestPort();
+      const transport = new Transport(port, true);
+      const loader = new ESPLoader({ transport, baudrate: 460800, terminal });
+      const t0 = performance.now();
+      try {
+        terminal.writeLine("chip: " + (await loader.main()));
+        const fileArray = [
+          { data: await get(patched ? "fw/bootloader-dout20m.bin" : "fw/bootloader.bin"), address: 0x1000 },
+          { data: await get("fw/partitions.bin"), address: 0x8000 },
+          { data: await get("fw/boot_app0.bin"), address: 0xe000 },
+          { data: await get("fw/esp32.bin"), address: 0x10000 },
+        ];
+        await loader.writeFlash({
+          fileArray,
+          flashMode: patched ? "keep" : "dout",
+          flashFreq: patched ? "keep" : "20m",
+          flashSize: "keep",
+          eraseAll: true,
+          compress: true,
+          reportProgress: (i, written, total) =>
+            (progress.textContent = `file ${i + 1}/4: ${Math.round((100 * written) / total)}%`),
+        });
+        await loader.after("hard_reset");
+        terminal.writeLine(`DONE in ${((performance.now() - t0) / 1000).toFixed(0)} s`);
+      } catch (e) {
+        terminal.writeLine("ERROR: " + e);
+      } finally {
+        await transport.disconnect();
+      }
+    };
+  </script>
+</body>
+</html>

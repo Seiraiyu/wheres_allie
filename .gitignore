@@ -12,3 +12,4 @@ __pycache__/
 box/.data/
 box/web/dist/
 data/*.bundle
+spikes/flash/fw/

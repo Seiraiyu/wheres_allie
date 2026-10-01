@@ -26,3 +26,8 @@ Raw notes as we hit them. Curate before submission (Devpost bonus up to 10%).
 
 ## Home Assistant MCP / Alexa+
 - The HA MCP Server only supports resources with the Assist API and has no MCP Apps support (docs, 2026-09).
+
+## 2026-10-01: esptool-js flash spike
+- esptool-js 0.7.0 patches the bootloader header itself when given `flashMode: "dout"`, `flashFreq: "20m"` (`Flash params set to 322`), and the board boots. A pre-patched bootloader isn't needed, which the ESPresense web installer could also use.
+- After a full erase the node joins nothing: it only shows up as its own `espresense-<mac>` AP, not in the router's client list. A phone took a minute or two to list the AP; the serial console (`SSID: 'espresense-00dcfe'`) was the quicker check.
+- The same flash took 28 s twice and 47 s once, with no error either way.
