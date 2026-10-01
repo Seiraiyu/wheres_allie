@@ -1,6 +1,22 @@
 # Phase 0 spike results
 
-## A. Alexa+ MCP Toolkit hello-world (date: )
+## A. Alexa+ MCP Toolkit hello-world (date: 2026-10-01, in progress)
+| Check | Result | Notes |
+|---|---|---|
+| Local tool call | pass | 200 in 8 ms, mcp 2.2 |
+| CLI install + configure | blocked 2026-10-01 | `@alexa-ai/cli` is not on public npm (404); it installs from Amazon's private CodeArtifact registry. IAM user + policy done, but AssumeRole on `AddOn3PDeveloperToolsRead` is denied: AWS account not allowlisted by Amazon |
+| Tunnel round-trip time | 132–143 ms warm, ~550 ms cold | limit 500 ms. Cold = new TLS connection per call (~390 ms handshake); warm = connection reused. From WSL via Cloudflare lax07 |
+| Deploy | | |
+| Web simulator calls tool | | phrases that worked: |
+| Real device speaks answer | | device model: |
+| Account linking = OAuth 2.1 + PKCE + resource | | |
+| 401 without WWW-Authenticate | | |
+| MCP Apps: devices, mime type, _meta key | | docs: MCP spec 2025-11-25 and the MCP Apps extension are supported |
+| Other limits (timeouts, payload size) | | docs: round trip under 500 ms; addon.json needs 6 icon sizes (72, 64, 88, 126, 180, 241 px) and a 600×900 carousel image; `examplePhrases` needs 3–4 items |
+
+**Finding (2026-10-01):** real Alexa+ is not reachable for this hackathon. The Alexa+ docs home says the MCP Toolkit is "available to select partners only", the add-ons console shows "Coming Soon", and the hackathon resources and rules give no access path. The track requirement is a self-hosted MCP server (spec 2025-11-25+, Streamable HTTP) or an Agent Skill; a simulated Alexa+ experience in a web app is the offered way to demo it. No device, simulator or account linking is required.
+
+**Decision:** pending owner. Affects design success criterion 2 (real Alexa+ device through the relay) and plan 06 (LWA account linking, Alexa add-on registration, tasks 15 and 18-20).
 
 ## B. BC021 motion trigger (date: )
 
