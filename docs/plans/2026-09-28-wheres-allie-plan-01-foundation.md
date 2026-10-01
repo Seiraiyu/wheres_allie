@@ -35,13 +35,16 @@ Contract: `docs/plans/2026-09-28-wheres-allie-conventions.md`. Design: `docs/pla
 | 23 | cli.py `serve` | pending | no | no |
 | 24 | web/ scaffold: tokens, left rail, empty pages | pending | no | no |
 | 25 | web/ lib (api, ws, types) + live Nodes page | pending | no | no |
+| 25a | Provision the box VM (`wheres-allie`, pve5, home LAN on vmbr1) + Docker | done | yes | no |
 | 26 | Dockerfile (multi-stage, multi-arch) | pending | no | no |
 | 27 | deploy/compose.yml + mosquitto conf/entrypoint | pending | no | no |
+| 27a | CI: tests on push/PR; tag `v*` → GHCR image → deploy to the box VM | pending | no | no |
 | 28 | `docker compose up` smoke test + LAN reachability | pending | no | no |
 | 29 | Register Allie; move the 5 nodes to the box broker (canary first) | pending | no | no |
 | 30 | Verify continuous collection; stop raw logger; import raw log to bundle | pending | no | no |
 | 31 | Friction log + spike results curation | pending | no | no |
 | 32 | Phase exit + push | pending | no | no |
+| 33 | Retire HAOS VM 325 (after a clean week on the box) | pending | no | no |
 
 ## Interface additions
 
@@ -89,6 +92,9 @@ These extend the conventions; none contradicts them. Later plans may rely on the
       - A test in their style passes, and `pnpm exec tsc --noEmit` and `pnpm build` stay clean. That test used `// @vitest-environment jsdom`, `describe/it/vi`, `configDefaults` from `vitest/config`, @testing-library `fireEvent`/`cleanup`, and a zustand store.
     - This plan installs only `react`, `react-dom` and `react-router-dom`. Later plans add `zustand`, `esptool-js`, `@modelcontextprotocol/ext-apps` and `@playwright/test` when they need them.
 14. **Deploy:** compose project `wheres-allie`, services `mosquitto` and `box`, local image `wheres-allie:dev`. `deploy/.env.example` is the template (the real `deploy/.env` is git-ignored). The mosquitto password file is `/mosquitto/data/passwd`.
+    - **No repo on the box VM (owner, 2026-10-01).** The VM holds only `~/wheres-allie/` (the files of `deploy/` plus `.env`) and Docker images. Releases deploy from CI (Task 27a): a `v*` tag builds `ghcr.io/seiraiyu/wheres-allie:{latest,<tag>}` on GitHub, then a job on the self-hosted runner `arc-runner-x86` copies `deploy/` to the VM over SSH, writes `.env` from repo secrets, pulls and restarts. `deploy/compose.yml` uses `image: ${WA_IMAGE:-wheres-allie:dev}` and has no `build:`.
+    - Before CI exists, or for a one-off build of an untagged commit: `git archive HEAD:box | ssh stonelyd@192.168.1.63 'docker build -t wheres-allie:dev -'` (the committed `box/` tree is the build context; nothing is cloned).
+    - Box tools run inside the container: the image includes `tools/` at `/app/tools`, so `docker compose exec box python tools/repoint_nodes.py …` works on the VM.
 15. **Spike results:** go in `docs/spikes/phase0.md`, which later plans read.
 
 ---
@@ -1765,7 +1771,7 @@ Expected: FAIL `can't open file '…/tools/repoint_nodes.py'`
     set -a; . ../deploy/.env; set +a
     uv run python tools/repoint_nodes.py --host 192.168.5.254 --user wheres_allie
         --pass-env WA_MQTT_PASS --backup-dir ~/wheres-allie-node-backup
-        office=192.168.5.232 --dry-run
+        office=192.168.5.233 --dry-run
 """
 
 import argparse
@@ -2952,14 +2958,38 @@ git add box/web/src
 git commit -m "feat: web api/ws/types libs and live Nodes health page" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
+### Task 25a: Provision the box VM
+
+**Decision (2026-10-01, owner):** the box runs on a dedicated Proxmox VM, not on the WSL2 dev machine and not on HAOS. HAOS VM 325 (`192.168.5.132`) is only the *old* broker the nodes still point at; it is retired in Task 33 once the box has collected cleanly for a week. Docker is **not** installed on cox-worker-1; every `docker …` step in Tasks 26–30 runs on this VM.
+
+**Files:** none in git.
+
+**Done 2026-10-01:** VM 326 `wheres-allie` on pve5, Debian 13, home LAN **`192.168.5.20`** (static, `eth0`/vmbr1, gw `192.168.5.1`; the router's DHCP leases were all observed at `.130`+), mgmt **`192.168.1.63`** (`eth1`/vmbr0). Docker CE + compose plugin, uv, git. A repo clone was made at `~/wheres_allie`; the owner then chose deploy-only (Interface additions 14), and it is deleted once Task 28 passes. cox-worker-1's `stonelyd` key is authorized, so laps run Docker steps with `ssh stonelyd@192.168.1.63 '…'`.
+
+**Placement constraint:** the ESPresense nodes live on the home LAN `192.168.5.0/24`, which only **pve4 and pve5** reach (bridge `vmbr1`, no host IP). The VM must run on one of them. Use **pve5** (HAOS VM 325 already runs there; pve4 is RAM-tight).
+
+**Spec:** VMID 326 (re-check it is free with `pvesh get /cluster/resources --type vm`), name `wheres-allie`, Debian 13 cloud image, 2 vCPU, 4 GiB RAM, 32 GiB on `ceph-pool`, `onboot=1`, qemu-guest-agent.
+- `net0` = `vmbr1` (home LAN): static `192.168.5.20` on `192.168.5.0/24`, outside the home router's DHCP pool (or a router DHCP reservation). This is the address the nodes publish MQTT to and the GUI is served on. Gateway/DNS = the home router.
+- `net1` = `vmbr0` (cluster mgmt LAN), static `192.168.1.63` in the `192.168.1.2–.63` static range (`.63` was free on 2026-10-01; scan before assigning), no gateway. This is how cox-worker-1 (`192.168.1.42`), which **cannot** route to `192.168.5.x`, reaches the VM over SSH for build/deploy steps.
+
+1. Create and boot the VM (cloud-init: user `stonelyd` with the fleet SSH keys, passwordless sudo, timezone `America/New_York`, static `ipconfig0`/`ipconfig1` as above).
+2. Install Docker from the official Docker apt repo (`docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`); add `stonelyd` to the `docker` group. Install `git` and `uv`.
+3. Add cox-worker-1's SSH public key to `stonelyd@192.168.1.63` so laps can `ssh stonelyd@192.168.1.63` and run the Docker steps there.
+4. Do **not** clone the repo on the VM. Deploys arrive over SSH (Interface additions 14, Task 27a) into `~/wheres-allie/`.
+5. **Verify:**
+   ```bash
+   ssh stonelyd@192.168.1.63 'docker run --rm hello-world | head -2; docker compose version; ip -4 -br addr'
+   ```
+   Expected: `Hello from Docker!`, a `Docker Compose version v2.x` line, and both `192.168.5.20` and `192.168.1.63` listed. From pve5: `ssh root@192.168.1.129 'qm guest cmd 326 network-get-interfaces'` shows the same two addresses. From the VM, `curl -s -m 5 http://192.168.5.233/wifi/main | head -c 80` (office node) returns JSON, proving the VM reaches the nodes.
+
 ### Task 26: Dockerfile (multi-stage, multi-arch)
 
 **Files:**
 - Create: `box/Dockerfile`, `box/.dockerignore`
 
-Run from the repo root. First make sure the Docker daemon is running: `docker info >/dev/null 2>&1 || sudo service docker start`.
+Docker runs on the box VM (Task 25a), not on the machine you edit on. Builds stream the **committed** `box/` tree to it over SSH, so commit before each build.
 
-**Step 1: Write the failing check.** `docker build -t wheres-allie:dev box/`
+**Step 1: Write the failing check.** From the repo root: `git archive HEAD:box | ssh stonelyd@192.168.1.63 'docker build -t wheres-allie:dev -'`
 Expected: FAIL `failed to read dockerfile: open Dockerfile: no such file or directory`
 
 **Step 2: Implement.**
@@ -2983,6 +3013,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev
+COPY tools ./tools
 COPY --from=web /web/dist ./web/dist
 ENV PATH="/app/.venv/bin:$PATH" WA_WEB_DIST=/app/web/dist WA_DATA_DIR=/data
 VOLUME /data
@@ -3001,12 +3032,12 @@ CMD ["wheres-allie", "serve"]
 web/node_modules
 web/dist
 tests
-tools
 ```
 
-**Step 3: Build and run it.**
+**Step 3: Commit, then build and run it** on the box VM. Commit first (Step 5's command), because the build context is the committed tree; amend the commit if the build needs a fix.
 ```bash
-docker build -t wheres-allie:dev box/
+git archive HEAD:box | ssh stonelyd@192.168.1.63 'docker build -t wheres-allie:dev -'
+ssh stonelyd@192.168.1.63   # the rest runs on the VM
 docker run --rm -d --name wa-test -p 18080:8080 -e WA_MQTT_PASS=x wheres-allie:dev
 sleep 5
 curl -s localhost:18080/api/health
@@ -3022,8 +3053,8 @@ The container log shows `mqtt: … retrying`; that is expected, because there is
 
 **Step 4: Check the multi-arch build.** Run the binfmt install once per machine; the arm64 build is slow under QEMU.
 ```bash
-docker run --privileged --rm tonistiigi/binfmt --install arm64
-docker buildx build --platform linux/arm64 -t wheres-allie:arm64-check box/
+ssh stonelyd@192.168.1.63 'docker run --privileged --rm tonistiigi/binfmt --install arm64'
+git archive HEAD:box | ssh stonelyd@192.168.1.63 'docker buildx build --platform linux/arm64 -t wheres-allie:arm64-check -'
 ```
 Expected: the build finishes. The numpy and shapely wheels exist for aarch64, so nothing compiles. If it fails, record it in the friction log and continue; arm64 is only needed for Pi users (plan 07 publishes images).
 
@@ -3038,8 +3069,10 @@ git commit -m "feat: multi-stage multi-arch box image serving API + GUI" -m "Co-
 **Files:**
 - Create: `deploy/compose.yml`, `deploy/mosquitto/mosquitto.conf`, `deploy/mosquitto/entrypoint.sh`, `deploy/.env.example`
 
-**Step 1: Write the failing check.** From the repo root: `docker compose -f deploy/compose.yml config`
-Expected: FAIL `open …/deploy/compose.yml: no such file or directory`
+The VM's copy of these files lives in `~/wheres-allie/` (Interface additions 14). Until Task 27a deploys them, copy them by hand: `git archive HEAD:deploy | ssh stonelyd@192.168.1.63 'mkdir -p ~/wheres-allie && tar -x -C ~/wheres-allie'`.
+
+**Step 1: Write the failing check.** `ssh stonelyd@192.168.1.63 'cd ~/wheres-allie && docker compose config'`
+Expected: FAIL (no `~/wheres-allie` directory, or `no configuration file provided: not found`).
 
 **Step 2: Implement.**
 
@@ -3072,6 +3105,8 @@ WA_TZ=America/New_York
 WA_PUBLIC_HOST=
 # Empty = relay disabled
 WA_RELAY_URL=
+# Image to run; CI sets ghcr.io/seiraiyu/wheres-allie:<tag>. Default: a local wheres-allie:dev build
+WA_IMAGE=
 ```
 `deploy/compose.yml`:
 ```yaml
@@ -3092,8 +3127,7 @@ services:
       - "1883:1883"
 
   box:
-    build: ../box
-    image: wheres-allie:dev
+    image: ${WA_IMAGE:-wheres-allie:dev}
     restart: unless-stopped
     depends_on: [mosquitto]
     environment:
@@ -3112,8 +3146,12 @@ volumes:
   wa-data:
 ```
 
-**Step 3: Verify the config renders.** `WA_MQTT_PASS=x docker compose -f deploy/compose.yml config --quiet && echo OK`
-Expected: `OK`. Without the variable set, compose must fail with `set WA_MQTT_PASS in deploy/.env`.
+**Step 3: Verify the config renders.** Commit (Step 5), copy the files to the VM (command above), then:
+```bash
+ssh stonelyd@192.168.1.63 'cd ~/wheres-allie && WA_MQTT_PASS=x docker compose config --quiet && echo OK'
+ssh stonelyd@192.168.1.63 'cd ~/wheres-allie && docker compose config --quiet'
+```
+Expected: `OK`, then the second command fails with `set WA_MQTT_PASS in deploy/.env`.
 
 **Step 4: Confirm `.env` is ignored.** `git check-ignore deploy/.env`
 Expected: `deploy/.env` (the existing `.env` rule covers it).
@@ -3124,21 +3162,203 @@ git add deploy/compose.yml deploy/mosquitto/mosquitto.conf deploy/mosquitto/entr
 git commit -m "feat: compose stack with authenticated mosquitto and the box" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
+### Task 27a: CI: tests on push/PR; tag `v*` → GHCR → deploy to the box VM
+
+**Files:**
+- Create: `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`
+
+Same pattern as `seiraiyu/guys-night-scorekeeper`: GitHub-hosted runners test and build; the self-hosted ARC scale set `arc-runner-x86` (on the cluster, so it can reach the VM's mgmt address) deploys over SSH with `appleboy/ssh-action`. The VM never holds a repo (Interface additions 14): `deploy/` travels inside the SSH step as a small base64 tarball, and `.env` is written from repo secrets. Plan 07 Task 20 later extends `ci.yml` (eval gate, multi-arch image) instead of creating it.
+
+**Step 1: Write the failing check.** `gh workflow list -R Seiraiyu/wheres_allie`
+Expected: no `ci` or `deploy` workflow.
+
+**Step 2: Implement.**
+
+`.github/workflows/ci.yml`:
+```yaml
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call: {}
+  workflow_dispatch: {}
+
+jobs:
+  box:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: box
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: box/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: box/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+```
+`.github/workflows/deploy.yml`:
+```yaml
+name: deploy
+
+# Tag v* -> tests -> image on GHCR -> deploy to the box VM over SSH (no repo on the VM).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+env:
+  IMAGE: ghcr.io/seiraiyu/wheres-allie
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      deploy_tar: ${{ steps.meta.outputs.deploy_tar }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version and pack deploy/
+        id: meta
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=manual-$(date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+          fi
+          # compose.yml + mosquitto files travel to the VM inside the SSH step (a few KB)
+          echo "deploy_tar=$(git archive HEAD:deploy | gzip -9 | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: box
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    # ARC scale set: a single bare label, never a [self-hosted, ...] array.
+    runs-on: arc-runner-x86
+    permissions:
+      packages: read
+    steps:
+      - name: Deploy to the box VM
+        uses: appleboy/ssh-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.build-and-push.outputs.version }}
+          DEPLOY_TAR: ${{ needs.build-and-push.outputs.deploy_tar }}
+          WA_MQTT_PASS: ${{ secrets.WA_MQTT_PASS }}
+          WA_PUBLIC_HOST: ${{ vars.WA_PUBLIC_HOST || '192.168.5.20' }}
+          WA_TZ: ${{ vars.WA_TZ || 'America/New_York' }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_SSH_PORT }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GH_TOKEN,VERSION,DEPLOY_TAR,WA_MQTT_PASS,WA_PUBLIC_HOST,WA_TZ
+          script: |
+            set -eu
+            mkdir -p ~/wheres-allie
+            cd ~/wheres-allie
+            echo "$DEPLOY_TAR" | base64 -d | gunzip | tar -x
+            umask 077
+            cat > .env <<ENV
+            WA_MQTT_USER=wheres_allie
+            WA_MQTT_PASS=$WA_MQTT_PASS
+            WA_TZ=$WA_TZ
+            WA_PUBLIC_HOST=$WA_PUBLIC_HOST
+            WA_RELAY_URL=
+            WA_IMAGE=ghcr.io/seiraiyu/wheres-allie:$VERSION
+            ENV
+            echo "$GH_TOKEN" | docker login ghcr.io -u github-actions --password-stdin
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker logout ghcr.io
+            docker image prune -f
+            for i in $(seq 1 30); do
+              curl -fsS localhost/api/health && exit 0
+              sleep 2
+            done
+            echo "box did not become healthy"; docker compose logs --tail 50 box; exit 1
+```
+
+**Step 3: Secrets.** A dedicated deploy key, authorized only for `stonelyd@192.168.1.63`, plus the broker password (generated once; it never appears in a log or in git):
+```bash
+ssh-keygen -t ed25519 -N '' -C 'wheres-allie deploy (GitHub Actions)' -f /tmp/wa-deploy
+ssh stonelyd@192.168.1.63 'cat >> ~/.ssh/authorized_keys' < /tmp/wa-deploy.pub
+R=Seiraiyu/wheres_allie
+gh secret set DEPLOY_HOST -R $R -b 192.168.1.63
+gh secret set DEPLOY_SSH_PORT -R $R -b 22
+gh secret set DEPLOY_SSH_USER -R $R -b stonelyd
+gh secret set DEPLOY_SSH_KEY -R $R < /tmp/wa-deploy
+head -c 18 /dev/urandom | base64 | tr -d '/+=' | gh secret set WA_MQTT_PASS -R $R
+shred -u /tmp/wa-deploy /tmp/wa-deploy.pub
+gh secret list -R $R
+```
+Expected: the five secrets listed. Optional repo variables `WA_PUBLIC_HOST` (default `192.168.5.20`) and `WA_TZ` (default `America/New_York`).
+
+**Step 4: Runner access (org admin).** `wheres_allie` is public. `arc-runner-x86`'s runner group must allow this repo, and the org/repo must require approval for workflows from fork PRs, so a fork can't run code on the cluster runner. Only `deploy.yml` (tags and manual runs, which need write access) uses it.
+
+**Step 5: Commit and push.**
+```bash
+git add .github/workflows/ci.yml .github/workflows/deploy.yml
+git commit -m "ci: tests on push/PR; tag v* builds GHCR image and deploys to the box VM" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git push
+```
+
+**Step 6: Verify with the first release.** `git tag v0.1.0 && git push origin v0.1.0 && gh run watch -R Seiraiyu/wheres_allie $(gh run list -R Seiraiyu/wheres_allie -w deploy -L1 --json databaseId -q '.[0].databaseId')`
+Expected: `test`, `build-and-push` and `deploy` all green; the deploy log ends with `{"ok":true,"version":"0.1.0","relay":"disabled"}`; `ghcr.io/seiraiyu/wheres-allie:v0.1.0` exists. If `deploy` sits queued, the runner group doesn't include this repo (Step 4). A failed release is fixed with a new tag (`v0.1.1`), never by moving a tag.
+
 ### Task 28: `docker compose up` smoke test + LAN reachability
 
-**Files:** none; this task writes only local `deploy/.env`, which is git-ignored.
+**Files:** none in git. The VM's `~/wheres-allie/.env` is written by the deploy job from repo secrets (Task 27a).
 
-The box host is the WSL2 dev machine at `192.168.5.254` (mirrored networking). Run from `deploy/`.
+The box host is the `wheres-allie` VM from Task 25a: home-LAN address `192.168.5.20`, reached over SSH at `192.168.1.63`. Steps 2–5 run **on the VM**, from `~/wheres-allie/` (`ssh stonelyd@192.168.1.63`).
 
-1. Create the env file with a fresh password:
-   ```bash
-   cp .env.example .env
-   sed -i "s/^WA_MQTT_PASS=.*/WA_MQTT_PASS=$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')/" .env
-   sed -i 's/^WA_PUBLIC_HOST=.*/WA_PUBLIC_HOST=192.168.5.254/' .env
-   ```
-   Copy the password into your password manager as "wheres_allie MQTT".
-2. Start the stack: `docker compose up -d --build && sleep 20 && docker compose ps`
-   Expected: `mosquitto` is running and `box` is running (healthy). If port 80 or 1883 is already taken, find the owner with `sudo ss -ltnp | grep -E ':(80|1883) '` and stop it (the old WSL mosquitto must stay disabled).
+1. The first release, `v0.1.0`, was deployed by Task 27a step 6. Later releases: tag `vX.Y.Z` and push the tag. The MQTT password is the `WA_MQTT_PASS` repo secret set in Task 27a; read it back from `~/wheres-allie/.env` on the VM if you need it, and copy it into your password manager as "wheres_allie MQTT".
+2. Check the stack: `sleep 20 && docker compose ps`
+   Expected: `mosquitto` is running and `box` is running (healthy). If port 80 or 1883 is already taken, find the owner with `sudo ss -ltnp | grep -E ':(80|1883) '` and stop it (nothing else should be listening on a fresh VM).
 3. Check the API and GUI:
    ```bash
    curl -s localhost/api/health                      # {"ok":true,"version":"0.1.0","relay":"disabled"}
@@ -3158,17 +3378,11 @@ The box host is the WSL2 dev machine at `192.168.5.254` (mirrored networking). R
    curl -s localhost/api/nodes            # [{"id":"smoke",…,"online":true,…,"nearby_devices":1}]
    curl -s localhost/api/tags/candidates  # [{"ibeacon_id":"iBeacon:smoke-1-2","node_id":"smoke","rssi":-60.0,…}]
    ```
-   Open `http://localhost/nodes` in the Windows browser: `smoke` shows with a green dot. Then clean up:
+   Open `http://192.168.5.20/nodes` in a browser on the home LAN: `smoke` shows with a green dot. Then clean up:
    ```bash
    docker compose exec box python -c "import sqlite3; sqlite3.connect('/data/wheres_allie.db').execute(\"DELETE FROM nodes WHERE id='smoke'\").connection.commit()"
    ```
-6. Check LAN reachability: this decides where the box runs. From another LAN machine (for example the Proxmox host `pve5`), run `nc -zv 192.168.5.254 1883 && nc -zv 192.168.5.254 80`. Expected: both `succeeded`/`open`.
-   - If this fails, first allow inbound traffic through the WSL Hyper-V firewall by running this in an **admin PowerShell** on Windows:
-     ```powershell
-     New-NetFirewallHyperVRule -Name WA-Box -DisplayName "wheres_allie box" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 80,1883
-     ```
-     Then retry.
-   - **If it still fails:** run the same compose stack on a small Proxmox LXC/VM instead, use its IP everywhere `192.168.5.254` appears below, and log the WSL/Docker networking friction.
+6. Check LAN reachability. From another machine on the home LAN (the dev machine, or a phone/laptop on that Wi-Fi), run `nc -zv 192.168.5.20 1883 && nc -zv 192.168.5.20 80`. Expected: both `succeeded`/`open`. A Debian VM has no host firewall by default; if this fails, check the VM's `net0` is on `vmbr1` and that `192.168.5.20` is not also handed out by the router's DHCP.
 7. Log what you did in the friction log, then commit it:
    ```bash
    git add docs/friction-log.md
@@ -3180,9 +3394,11 @@ The box host is the WSL2 dev machine at `192.168.5.254` (mirrored networking). R
 
 **Files:** none; the procedure is in `docs/runbooks/move-nodes-to-box.md`.
 
-Node map: office `192.168.5.232`, moms_room `.186`, kitchen `.225`, master_bedroom `.172`, loft `.222`. Loft may have a new IP after Task 3; use the one recorded there.
+Node map (re-discovered 2026-10-01; the nodes are on router DHCP and drift, so re-check with `for i in $(seq 130 254); do curl -s -m2 http://192.168.5.$i/wifi/main | grep -o '"room":"[^"]*"' | head -1 | sed "s/^/$i /"; done` from the box VM before running): office `192.168.5.233`, moms_room `.186`, kitchen `.226`, master_bedroom `.173`, loft `.222`. Loft may have a new IP after Task 3; use the one recorded there.
 
-1. **Register Allie first**, so her readings are stored from the first minute. Run from anywhere:
+Run every step on the box VM (Task 25a), from `~/wheres-allie` (`ssh stonelyd@192.168.1.63`). The tool runs inside the `box` container (Interface additions 14), which already has `WA_MQTT_USER`/`WA_MQTT_PASS`; node backups go to `/data/node-backup` on the `wa-data` volume.
+
+1. **Register Allie first**, so her readings are stored from the first minute. Run on the VM:
    ```bash
    curl -s -X POST localhost/api/pets -H 'content-type: application/json' -d '{"name":"Allie","species":"dog"}'
    # if spike B passed:
@@ -3193,45 +3409,45 @@ Node map: office `192.168.5.232`, moms_room `.186`, kitchen `.225`, master_bedro
      -d '{"ibeacon_id":"iBeacon:426c7565-4368-6172-6d42-6561636f6e73-3838-4949"}'
    ```
    Expected: `{"id":1,"name":"Allie",…,"tags":[{…"ibeacon_id":"iBeacon:426c…-3838-4949"…}]}`.
-2. **Dry-run the canary (office)** from `box/`:
+2. **Dry-run the canary (office):**
    ```bash
-   set -a; . ../deploy/.env; set +a
-   uv run python tools/repoint_nodes.py --host 192.168.5.254 --user "$WA_MQTT_USER" --pass-env WA_MQTT_PASS \
-     --backup-dir ~/wheres-allie-node-backup office=192.168.5.232 --dry-run
+   docker compose exec box python tools/repoint_nodes.py --host 192.168.5.20 --user wheres_allie --pass-env WA_MQTT_PASS \
+     --backup-dir /data/node-backup office=192.168.5.233 --dry-run
    ```
    Expected: only these lines, followed by `office: dry run, nothing saved`:
    ```
-   office: mqtt_host: '192.168.5.132' -> '192.168.5.254'
+   office: mqtt_host: '192.168.5.132' -> '192.168.5.20'
    office: mqtt_user: '***###***' -> '***###***'
    office: mqtt_pass: '***###***' -> '***###***'
    ```
-   There may also be an `auto_update: True -> False` line. `~/wheres-allie-node-backup/office.json` must contain `"wifi-ssid"`. **Stop** if any other key is listed, or if it reports `expected 'office'`, which means the wrong IP.
+   There may also be an `auto_update: True -> False` line. `docker compose exec box grep -c wifi-ssid /data/node-backup/office.json` must print `1`. **Stop** if any other key is listed, or if it reports `expected 'office'`, which means the wrong IP.
 3. **Apply it to the canary.** Run the same command without `--dry-run`, then watch:
    ```bash
-   docker compose -f ../deploy/compose.yml exec mosquitto mosquitto_sub -u "$WA_MQTT_USER" -P "$WA_MQTT_PASS" -v -t 'espresense/rooms/office/#' -W 90
+   set -a; . ./.env; set +a
+   docker compose exec mosquitto mosquitto_sub -u "$WA_MQTT_USER" -P "$WA_MQTT_PASS" -v -t 'espresense/rooms/office/#' -W 90
    ```
    **Pass** means that within 60 s you see `espresense/rooms/office/status online` and a `…/telemetry` message, and `curl -s localhost/api/nodes` lists `office` with `"online":true`.
    **Rollback** if nothing arrives within 2 minutes:
    ```bash
    read -rsp 'HA MQTT password: ' HA_MQTT_PASS; echo; export HA_MQTT_PASS
-   uv run python tools/repoint_nodes.py --host 192.168.5.132 --user mqtt --pass-env HA_MQTT_PASS office=192.168.5.232
+   docker compose exec -e HA_MQTT_PASS box python tools/repoint_nodes.py --host 192.168.5.132 --user mqtt --pass-env HA_MQTT_PASS office=192.168.5.233
    ```
    If the node is unreachable over HTTP, use its `espresense…` captive-portal AP at http://192.168.4.1 (see the runbook). Fix the cause (usually LAN reachability, Task 28 step 6) before continuing.
 4. **Move the remaining 4 nodes.** Dry-run them first, check the same rule as step 2, then run for real:
    ```bash
-   uv run python tools/repoint_nodes.py --host 192.168.5.254 --user "$WA_MQTT_USER" --pass-env WA_MQTT_PASS \
-     --backup-dir ~/wheres-allie-node-backup moms_room=192.168.5.186 kitchen=192.168.5.225 \
-     master_bedroom=192.168.5.172 loft=192.168.5.222 --dry-run
+   docker compose exec box python tools/repoint_nodes.py --host 192.168.5.20 --user wheres_allie --pass-env WA_MQTT_PASS \
+     --backup-dir /data/node-backup moms_room=192.168.5.186 kitchen=192.168.5.226 \
+     master_bedroom=192.168.5.173 loft=192.168.5.222 --dry-run
    ```
-5. **Verify.** Within 2 minutes, `http://localhost/nodes` shows all 5 nodes with green dots, a Wi-Fi RSSI and version `v4.0.6`. The HA companion now shows them unavailable, which is expected. Log this in the friction log.
+5. **Verify.** Within 2 minutes, `http://192.168.5.20/nodes` shows all 5 nodes with green dots, a Wi-Fi RSSI and version `v4.0.6`. The HA companion now shows them unavailable, which is expected. Log this in the friction log.
 
 ### Task 30: Verify continuous collection; stop the raw logger; import the raw log
 
 **Files:** none committed; the bundle is personal data and is git-ignored.
 
-1. Take the first sample now and a second one 10 minutes later. Run from the repo root:
+1. Take the first sample now and a second one 10 minutes later. Run on the box VM, from `~/wheres-allie`:
    ```bash
-   docker compose -f deploy/compose.yml exec box python -c "import sqlite3,time; c=sqlite3.connect('/data/wheres_allie.db'); print(c.execute('SELECT node_id, count(*), round(? - max(ts)) FROM readings GROUP BY node_id', (time.time(),)).fetchall()); print('gaps', c.execute('SELECT count(*) FROM gaps').fetchone())"
+   docker compose exec box python -c "import sqlite3,time; c=sqlite3.connect('/data/wheres_allie.db'); print(c.execute('SELECT node_id, count(*), round(? - max(ts)) FROM readings GROUP BY node_id', (time.time(),)).fetchall()); print('gaps', c.execute('SELECT count(*) FROM gaps').fetchone())"
    ```
    **Pass** requires all of the following:
    - (a) the total count grows between the two samples, by about 150 or more per 10 min when Allie is near any node;
@@ -3239,7 +3455,7 @@ Node map: office `192.168.5.232`, moms_room `.186`, kitchen `.225`, master_bedro
    - (c) `gaps (0,)`.
 
    If Allie is away from every node, walk the tag past a node and re-sample.
-2. **Only after that passes**, stop the ad-hoc logger:
+2. **Only after that passes**, stop the ad-hoc logger on the machine where it runs (the dev machine that holds `data/allie-raw.log`, not the box VM):
    ```bash
    pkill -f allie-raw; sleep 1; pgrep -fa allie-raw || echo "raw logger stopped"
    ```
@@ -3251,6 +3467,7 @@ Node map: office `192.168.5.232`, moms_room `.186`, kitchen `.225`, master_bedro
    ```
    Expected: `N readings -> ../data/allie-2026-09-28.bundle` with N ≥ 852, and the node list includes `office`, `kitchen`, `master_bedroom`, `loft` and `moms_room` (whichever heard Allie). `git status --short data/` shows nothing, because the bundle is git-ignored. Copy the bundle to backup storage outside the repo.
 4. Leave the stack running. From now on the box is the data collector: do **not** `docker compose down -v`, which would delete the `wa-data` volume.
+5. Delete the old repo clone on the VM (Interface additions 14): `ssh stonelyd@192.168.1.63 'rm -rf ~/wheres_allie'`. Check first that nothing in `~/wheres-allie/` refers to it.
 
 ### Task 31: Friction log + spike results curation
 
@@ -3259,7 +3476,7 @@ Node map: office `192.168.5.232`, moms_room `.186`, kitchen `.225`, master_bedro
 - Modify: `docs/spikes/phase0.md`
 
 1. Make sure `docs/spikes/phase0.md` has a **Decision:** line filled in for A, B and C, and that each "tell plan N owner" action from Tasks 1–3 has been sent to the team lead. Add a line per action: `Sent to: <who>, <date>`.
-2. Add a dated `## 2026-MM-DD: Phase 1 box bring-up` section to `docs/friction-log.md`. Include anything surprising from Tasks 26–30: Docker in WSL, the Hyper-V firewall, mosquitto password-file permissions, ESPresense node repointing, and whether the HA companion noticed.
+2. Add a dated `## 2026-MM-DD: Phase 1 box bring-up` section to `docs/friction-log.md`. Include anything surprising from Tasks 26–30: provisioning the box VM on the home LAN, mosquitto password-file permissions, ESPresense node repointing, and whether the HA companion noticed.
 3. Commit:
    ```bash
    git add docs/friction-log.md docs/spikes/phase0.md
@@ -3284,14 +3501,27 @@ Node map: office `192.168.5.232`, moms_room `.186`, kitchen `.225`, master_bedro
    ```
 4. Set the `Pushed` column to `yes`, then commit and push again with `git commit -am "docs: plan 01 pushed" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>" && git push origin main`.
 
+### Task 33: Retire HAOS VM 325
+
+HAOS VM 325 (pve5, `192.168.5.132`) only exists as the nodes' old broker and the Task 29 rollback target. Retire it once the box has proven itself.
+
+1. **Gate:** at least 7 days after Task 30 passed, the Task 30 step 1 query shows all 5 nodes with an age under 60 s and no new `gaps` rows beyond planned restarts. Confirm no node still points at the old broker: `ssh stonelyd@192.168.1.63 'for ip in 233 186 226 173 222; do curl -s -m3 http://192.168.5.$ip/wifi/main | grep -o "\"room\":\"[^\"]*\"\|\"mqtt_host\":\"[^\"]*\"" | tr "
+" " "; echo; done'` (every line shows `"mqtt_host":"192.168.5.20"`; re-check the IPs as in Task 29) prints `192.168.5.20` five times.
+2. Take a final backup, then stop it and disable autostart (do not destroy yet):
+   ```bash
+   ssh root@192.168.1.129 'vzdump 325 --storage local --compress zstd --mode stop && qm set 325 --onboot 0 && qm shutdown 325'
+   ```
+3. Leave it stopped for another 7 days. If nothing regressed, the owner decides whether to `qm destroy 325` (the vzdump stays as the archive). Record the outcome in the infra repo.
+
 ## Phase exit criteria
 
 - [ ] `docs/spikes/phase0.md` has results and a decision for spikes A, B and C, and the affected plan owners have been told.
 - [ ] `cd box && uv run pytest -q` → 43 passed; `uv run ruff check .` is clean.
 - [ ] `cd box/web && pnpm test && pnpm build` → 3 test files pass; `dist/` builds.
-- [ ] `docker compose -f deploy/compose.yml ps` shows `mosquitto` and a healthy `box`. `http://<box-ip>/` serves the GUI, and `/nodes` lists all 5 nodes online with v4.0.6.
+- [ ] `docker compose -f deploy/compose.yml ps` shows `mosquitto` and a healthy `box`. `http://192.168.5.20/` (the `wheres-allie` VM on pve5) serves the GUI, and `/nodes` lists all 5 nodes online with v4.0.6.
 - [ ] Anonymous MQTT is refused, and the LAN can reach ports 1883 and 80.
 - [ ] Allie is registered (with a motion id if spike B passed), and `readings` grows continuously with `gaps` at 0 over a 10 min check.
 - [ ] The ad-hoc `allie-raw` logger is stopped **after** ingest was verified, and `data/allie-2026-09-28.bundle` exists (git-ignored) and round-trips through `read_bundle`.
 - [ ] No secrets in git: `git grep -nE 'WA_MQTT_PASS=[^c]|-P .[A-Za-z0-9]{12}'` returns nothing (only `change-me` in `.env.example`).
 - [ ] Everything is pushed to `origin/main`.
+
