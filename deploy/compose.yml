@@ -1,0 +1,34 @@
+name: wheres-allie
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/mosquitto/entrypoint.sh"]
+    environment:
+      WA_MQTT_USER: ${WA_MQTT_USER:-wheres_allie}
+      WA_MQTT_PASS: ${WA_MQTT_PASS:?set WA_MQTT_PASS in deploy/.env}
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/entrypoint.sh:/mosquitto/entrypoint.sh:ro
+    ports:
+      - "1883:1883"
+
+  box:
+    image: ${WA_IMAGE:-wheres-allie:dev}
+    restart: unless-stopped
+    depends_on: [mosquitto]
+    environment:
+      WA_MQTT_HOST: mosquitto
+      WA_MQTT_USER: ${WA_MQTT_USER:-wheres_allie}
+      WA_MQTT_PASS: ${WA_MQTT_PASS:?set WA_MQTT_PASS in deploy/.env}
+      WA_TZ: ${WA_TZ:-America/New_York}
+      WA_PUBLIC_HOST: ${WA_PUBLIC_HOST:-}
+      WA_RELAY_URL: ${WA_RELAY_URL:-}
+    volumes:
+      - wa-data:/data
+    ports:
+      - "80:8080"
+
+volumes:
+  wa-data:
